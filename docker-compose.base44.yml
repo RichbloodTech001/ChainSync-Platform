@@ -1,0 +1,111 @@
+# Base44 sandbox development environment for ChainSync.
+#
+# Runs the CLONED SOURCE with live reload (next dev). This is not a production
+# deployment and does not use the repo's production image or build output.
+#
+#   docker compose -f docker-compose.base44.yml up -d --build
+#
+# Preview entry point: host port 3000.
+name: chainsync
+
+services:
+  # Local PostgreSQL. Credentials are generated for this sandbox and wired
+  # inline; they are never stored in the repository.
+  db:
+    image: postgres:16-alpine
+    restart: on-failure
+    environment:
+      POSTGRES_USER: chainsync
+      POSTGRES_PASSWORD: chainsync_dev_password
+      POSTGRES_DB: chainsync
+    volumes:
+      - chainsync-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chainsync -d chainsync"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # One-shot dependency install. There is no package-lock.json in the repo, so
+  # `npm install` (not `npm ci`) is used. Also generates the Prisma client,
+  # which lands in the shared node_modules volume.
+  install:
+    image: chainsync-base44-dev:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    working_dir: /app
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - .:/app
+      - chainsync-node-modules:/app/node_modules
+    command: ["sh", "-ec", "npm install --no-audit --no-fund && npx prisma generate"]
+
+  # One-shot schema migration against the local database.
+  migrate:
+    image: chainsync-base44-dev:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    working_dir: /app
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://chainsync:chainsync_dev_password@db:5432/chainsync?schema=public
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    volumes:
+      - .:/app
+      - chainsync-node-modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      install:
+        condition: service_completed_successfully
+    command: ["sh", "-ec", "npx prisma migrate deploy"]
+
+  web:
+    image: chainsync-base44-dev:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://chainsync:chainsync_dev_password@db:5432/chainsync?schema=public
+      # Preview-environment passthrough (see AGENTS.md).
+      BASE44_PREVIEW_MODE:
+      BASE44_PUBLIC_HOST_SUFFIX:
+      BASE44_SANDBOX_HOST_DOMAIN:
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    volumes:
+      - .:/app
+      - chainsync-node-modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      install:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    # Bind 0.0.0.0 so the preview proxy can reach the dev server.
+    command: ["sh", "-ec", "exec npm run dev -- -H 0.0.0.0 -p 3000"]
+    restart: on-failure
+    healthcheck:
+      # Existing read-only liveness endpoint; the page itself needs RPC/database
+      # work, so the API is the cheapest honest responsiveness probe.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+volumes:
+  chainsync-db:
+  chainsync-node-modules:

@@ -48,4 +48,7 @@ model AuditEvent {
   @@index([createdAt])
   @@index([actorId, createdAt])
 }
-enum UserRole { USER ADMIN }
+enum UserRole {
+  USER
+  ADMIN
+}
