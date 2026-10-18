@@ -3,6 +3,7 @@ import { compare } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { rateLimit, requestKey } from "@/lib/rate-limit";
 import { createSession, SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
+import { isSameOrigin } from "@/lib/origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,8 +11,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const rate = rateLimit(requestKey(request, "login"), 10, 15 * 60 * 1000);
   if (!rate.allowed) return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429, headers: { "Retry-After": String(rate.retryAfter) } });
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return NextResponse.json({ error: "Request origin rejected." }, { status: 403 });
+  if (!isSameOrigin(request)) return NextResponse.json({ error: "Request origin rejected." }, { status: 403 });
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "A valid JSON body is required." }, { status: 400 }); }
   if (!body || typeof body !== "object") return NextResponse.json({ error: "A valid JSON body is required." }, { status: 400 });

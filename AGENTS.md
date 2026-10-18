@@ -53,9 +53,11 @@ never need a rebuild — the repo is bind-mounted and `next dev` serves live sou
   not in an env file, and it is never a Base44 secret.
 - `SESSION_SECRET` must be ≥32 bytes; `lib/session.ts` throws otherwise. Auth
   endpoints fail with a 500 if it is missing or too short.
-- `BASE44_PREVIEW_MODE`, `BASE44_PUBLIC_HOST_SUFFIX` and `BASE44_SANDBOX_HOST_DOMAIN`
-  are passed through to `web` but the app reads none of them today. Next 14 `next dev`
-  binds `0.0.0.0:3000` via the compose command and has no `allowedDevOrigins` config.
+- `BASE44_PREVIEW_MODE` and `BASE44_PUBLIC_HOST_SUFFIX` are passed through to
+  `web` and read by `lib/origin.ts` (preview-only same-origin allowance, see
+  above). `BASE44_SANDBOX_HOST_DOMAIN` is passed through but unused. Next 14
+  `next dev` binds `0.0.0.0:3000` via the compose command; Next 14 has no
+  `allowedDevOrigins` config option.
 
 ## Verify
 
@@ -70,10 +72,36 @@ Account flows need a real row: register at `/account` (password must be 12–128
 characters), then save a watchlist address. Watchlist writes are persisted in
 Postgres; verify with a read of `/api/watchlists` while signed in.
 
-Note: `POST /api/watchlists` compares the request `Origin` against
-`request.nextUrl.origin` and returns 403 on a mismatch. Behind the preview proxy
-the `Origin` may differ from the forwarded `Host`; this is the app's own CSRF
-protection and must not be weakened for the sandbox.
+## Same-origin (CSRF) checks
+
+Every state-changing endpoint (`/api/auth/register`, `/api/auth/login`,
+`/api/auth/logout`, watchlist create and delete) calls `isSameOrigin()` from
+`lib/origin.ts`, which compares the browser's `Origin` against the origin the
+request was addressed to (`x-forwarded-host` ?? `host`, with
+`x-forwarded-proto` for the scheme).
+
+Do not reintroduce `request.nextUrl.origin` in that comparison. It is derived
+from the address the server was bound to — `http://0.0.0.0:3000` under
+`next dev -H 0.0.0.0`, and likewise for a default `next start` — so a genuine
+same-origin browser request never matched and *every* account write returned
+403 `Request origin rejected.` Registration and sign-in could not work in any
+environment, not just the sandbox.
+
+The Base44 preview proxy rewrites `Host` to the internal sandbox host while the
+browser keeps sending the preview's public origin, so `lib/origin.ts` also
+accepts `https://3000-$BASE44_PUBLIC_HOST_SUFFIX` — only when
+`BASE44_PREVIEW_MODE === "1"`. Cross-site origins are still rejected (403) and
+behaviour is unchanged when the variable is unset.
+
+Probe it without creating data (401 = origin accepted, 403 = rejected):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "Origin: https://evil.example" \
+  "https://3000-$BASE44_PUBLIC_HOST_SUFFIX/api/watchlists/probe-id"   # expect 403
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE \
+  -H "Origin: https://3000-$BASE44_PUBLIC_HOST_SUFFIX" \
+  "https://3000-$BASE44_PUBLIC_HOST_SUFFIX/api/watchlists/probe-id"   # expect 401
+```
 
 ## Tests
 
