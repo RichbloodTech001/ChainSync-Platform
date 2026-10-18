@@ -11,11 +11,19 @@ model User {
   passwordHash String
   displayName String?
   role UserRole @default(USER)
+  emailVerifiedAt DateTime?
+  /// Bumped on password change/reset so previously issued session cookies stop working.
+  sessionEpoch Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   watchlists WatchAddress[]
-  alerts AlertPreference[]
+  alertPreferences AlertPreference[]
+  alerts Alert[]
+  monitorEvents MonitorEvent[]
+  emailTokens EmailToken[]
   auditEvents AuditEvent[] @relation("ActorEvents")
+
+  @@index([emailVerifiedAt])
 }
 model WatchAddress {
   id String @id @default(cuid())
@@ -23,18 +31,127 @@ model WatchAddress {
   label String
   address String
   chainId Int @default(1)
+  /// Last native balance observed by the indexer (wei, decimal string).
+  lastBalanceWei String?
+  /// Last transaction count observed by the indexer (detects outgoing activity).
+  lastNonce Int?
+  lastObservedBlock BigInt?
+  lastCheckedAt DateTime?
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monitorEvents MonitorEvent[]
+  alerts Alert[]
   @@unique([userId, address, chainId])
   @@index([userId, createdAt])
+  @@index([chainId])
+  @@index([lastCheckedAt])
+}
+model MonitorEvent {
+  id String @id @default(cuid())
+  userId String
+  watchAddressId String
+  chainId Int
+  kind MonitorEventKind
+  blockNumber BigInt?
+  balanceWei String?
+  previousBalanceWei String?
+  nonce Int?
+  detail String?
+  detectedAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  watchAddress WatchAddress @relation(fields: [watchAddressId], references: [id], onDelete: Cascade)
+  /// Deduplicates repeated detections of the same observation.
+  fingerprint String
+  @@unique([watchAddressId, fingerprint])
+  @@index([userId, detectedAt])
+  @@index([detectedAt])
+}
+model Alert {
+  id String @id @default(cuid())
+  userId String
+  watchAddressId String?
+  chainId Int?
+  kind AlertKind
+  severity AlertSeverity @default(INFO)
+  title String
+  body String
+  fingerprint String @unique
+  payload Json?
+  emailStatus EmailDeliveryStatus @default(PENDING)
+  emailAttempts Int @default(0)
+  emailError String?
+  emailedAt DateTime?
+  readAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  watchAddress WatchAddress? @relation(fields: [watchAddressId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@index([emailStatus, createdAt])
+  @@index([createdAt])
 }
 model AlertPreference {
   id String @id @default(cuid())
   userId String
   enabled Boolean @default(true)
+  emailEnabled Boolean @default(true)
   channel String @default("in_app")
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId])
+}
+model EmailToken {
+  id String @id @default(cuid())
+  userId String
+  purpose EmailTokenPurpose
+  /// SHA-256 of the single-use token. The raw value only ever exists in the email.
+  tokenHash String @unique
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, purpose])
+  @@index([expiresAt])
+}
+model EmailMessage {
+  id String @id @default(cuid())
+  to String
+  subject String
+  body String
+  kind String
+  status EmailStatus @default(QUEUED)
+  provider String
+  error String?
+  attempts Int @default(0)
+  sentAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
+model NetworkSample {
+  id String @id @default(cuid())
+  networkId String
+  chainId Int
+  status String
+  latestBlock BigInt?
+  latencyMs Int?
+  error String?
+  checkedAt DateTime @default(now())
+  @@index([networkId, checkedAt])
+  @@index([checkedAt])
+}
+/// Small key/value store for worker heartbeat and indexer cursors.
+model SystemState {
+  key String @id
+  value String
+  updatedAt DateTime @updatedAt
+}
+/// Shared fixed-window rate limit counters (see lib/rate-limit.ts).
+model RateLimitBucket {
+  key String @id
+  count Int
+  resetAt DateTime
+  @@index([resetAt])
 }
 model AuditEvent {
   id String @id @default(cuid())
@@ -51,4 +168,34 @@ model AuditEvent {
 enum UserRole {
   USER
   ADMIN
+}
+enum MonitorEventKind {
+  BALANCE_CHANGE
+  OUTGOING_TRANSACTION
+}
+enum AlertKind {
+  WATCH_ACTIVITY
+  NETWORK_HEALTH
+  ACCOUNT
+}
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+enum EmailTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+enum EmailDeliveryStatus {
+  PENDING
+  SENT
+  QUEUED
+  FAILED
+  SKIPPED
 }

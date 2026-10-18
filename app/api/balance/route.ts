@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicClient, formatEther, http, isAddress, type Chain } from "viem";
-import { mainnet, sepolia } from "viem/chains";
+import { formatEther, isAddress } from "viem";
+import { createClient, networkById } from "@/lib/rpc";
+import { rateLimit, rateLimitResponse, requestKey } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const NETWORKS: Record<string, { chain: Chain; env: string; fallback: string }> = {
-  ethereum: { chain: mainnet, env: "ETHEREUM_RPC_URL", fallback: "https://cloudflare-eth.com" },
-  sepolia: { chain: sepolia, env: "SEPOLIA_RPC_URL", fallback: "https://ethereum-sepolia-rpc.publicnode.com" },
-};
 
 export async function GET(request: NextRequest) {
   const address = request.nextUrl.searchParams.get("address")?.trim();
@@ -16,14 +12,17 @@ export async function GET(request: NextRequest) {
   if (!address || !isAddress(address)) {
     return NextResponse.json({ error: "A valid public EVM address is required." }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
-  const selected = NETWORKS[network];
+  const selected = networkById(network);
   if (!selected) {
     return NextResponse.json({ error: "Unsupported network. Use ethereum or sepolia." }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 
+  // Shared limiter: this read-only endpoint is public, so it is throttled per client.
+  const rate = await rateLimit(requestKey(request, "balance"), 60, 60 * 1000);
+  if (!rate.allowed) return rateLimitResponse(rate);
+
   try {
-    const rpcUrl = process.env[selected.env] || selected.fallback;
-    const client = createPublicClient({ chain: selected.chain, transport: http(rpcUrl, { timeout: 8_000, retryCount: 1 }) });
+    const client = createClient(selected);
     const [balance, blockNumber] = await Promise.all([
       client.getBalance({ address }),
       client.getBlockNumber(),

@@ -8,5 +8,6 @@ coverage
 .env.*
 !.env.example
 !.env.base44-defaults
+!.env.production.example
 *.log
 .DS_Store

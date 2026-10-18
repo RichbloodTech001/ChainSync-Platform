@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-type User = { id: string; email: string; displayName: string | null; role?: string };
+type User = { id: string; email: string; displayName: string | null; role?: string; emailVerified?: boolean };
 type WatchItem = { id: string; address: string; label: string; chainId: number; createdAt: string };
 
 export default function AccountPage() {
@@ -40,7 +40,12 @@ export default function AccountPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Authentication failed.");
-      setUser(data.user); setPassword(""); setMessage(mode === "register" ? "Account created. Email verification is not enabled yet; public launch requires it." : "Signed in successfully.");
+      setUser(data.user); setPassword("");
+      setMessage(mode === "register"
+        ? "Account created. Check your inbox for the verification link to finish setup."
+        : data.user?.emailVerified === false
+          ? "Signed in. Your email address is not verified yet — use the banner above to resend the link."
+          : "Signed in successfully.");
       const watchResponse = await fetch("/api/watchlists", { cache: "no-store" });
       const watchData = await watchResponse.json();
       if (watchResponse.ok) setItems(watchData.items ?? []);
@@ -54,6 +59,17 @@ export default function AccountPage() {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("Unable to sign out.");
       setUser(null); setItems([]); setMessage("Signed out.");
+    } catch (err) { setError(err instanceof Error ? err.message : "Request failed."); }
+    finally { setBusy(false); }
+  }
+
+  async function resendVerification() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch("/api/auth/resend-verification", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Unable to send the verification email.");
+      setMessage(data.alreadyVerified ? "This email address is already verified." : "Verification email sent. Check your inbox for the link.");
     } catch (err) { setError(err instanceof Error ? err.message : "Request failed."); }
     finally { setBusy(false); }
   }
@@ -93,9 +109,11 @@ export default function AccountPage() {
         <label htmlFor="account-email">Email address</label><input id="account-email" type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" maxLength={254} required />
         <label htmlFor="account-password">Password {mode === "register" ? "(12–128 characters)" : ""}</label><input id="account-password" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 12 : 1} maxLength={128} required />
         <button type="submit" disabled={busy}>{busy ? "Please wait…" : mode === "register" ? "Create account" : "Sign in"}</button>
-        <p className="result-note">Requires a configured PostgreSQL database and a strong SESSION_SECRET. Account verification and password recovery are not yet available.</p>
+        <p className="result-note">Passwords are hashed with bcrypt and sessions are signed, expiring HttpOnly cookies. New accounts receive a verification email, and password recovery is available from the link below.</p>
+        {mode === "login" && <p className="result-note"><a className="link" href="/reset-password">Forgot your password? →</a></p>}
       </form> : <>
-        <section className="panel account-panel"><div className="panel-head"><div><h2>{user.displayName || user.email}</h2><p>{user.email}</p></div><button type="button" className="secondary" disabled={busy} onClick={signOut}>Sign out</button></div>
+        {user.emailVerified === false && <div className="check-error" role="alert">Your email address is not verified yet. Open the link we emailed you, or resend it below. <button type="button" className="link" disabled={busy} onClick={resendVerification}>Resend verification email</button></div>}
+        <section className="panel account-panel"><div className="panel-head"><div><h2>{user.displayName || user.email}</h2><p>{user.email} · {user.emailVerified ? "Email verified" : "Email unverified"}</p></div><span><a className="link" href="/alerts">Alerts and monitoring →</a> <button type="button" className="secondary" disabled={busy} onClick={signOut}>Sign out</button></span></div>
           <h2>Saved public addresses</h2><p className="result-note">Saved to the database for this account only.</p>
           <form className="account-add" onSubmit={addAddress}>
             <label htmlFor="watch-label">Label</label><input id="watch-label" value={label} onChange={e => setLabel(e.target.value)} maxLength={80} placeholder="My wallet" />
@@ -106,7 +124,7 @@ export default function AccountPage() {
           {items.length ? <div className="saved-list">{items.map(item => <article key={item.id}><span><strong>{item.label}</strong><small>{item.address.slice(0, 12)}…{item.address.slice(-8)}</small><em>{item.chainId === 1 ? "Ethereum Mainnet" : "Sepolia Testnet"}</em></span><button type="button" className="plain" onClick={() => removeAddress(item.id)}>Remove</button></article>)}</div> : <div className="empty"><b>No saved addresses yet</b><p>Add a public address above to begin your watchlist.</p></div>}
         </section>
       </>}
-      <aside className="check-safety"><strong>Production readiness note</strong><p>This account foundation uses hashed passwords and signed, expiring HttpOnly sessions. Before public launch, configure shared edge rate limits, email verification, password reset, monitoring, and database migration backups.</p></aside>
+      <aside className="check-safety"><strong>Account security</strong><p>Passwords are hashed with bcrypt, sessions are signed and expiring, and changing a password signs out every existing session. Verification and password-reset emails are delivered by the configured email transport; in development they are held in the outbox until SMTP is configured.</p></aside>
     </section>
   </main>;
 }

@@ -98,12 +98,48 @@ services:
     command: ["sh", "-ec", "exec npm run dev -- -H 0.0.0.0 -p 3000"]
     restart: on-failure
     healthcheck:
-      # Existing read-only liveness endpoint; the page itself needs RPC/database
-      # work, so the API is the cheapest honest responsiveness probe.
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      # Readiness endpoint: verifies the app answers AND can reach the database.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s
       timeout: 5s
       retries: 6
+      start_period: 60s
+
+  # Long-running monitoring worker: scheduled network checks, watched-address
+  # indexing and alert delivery (see lib/monitor.ts). Live-reloaded by `tsx watch`.
+  worker:
+    image: chainsync-base44-dev:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.base44
+    working_dir: /app
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://chainsync:chainsync_dev_password@db:5432/chainsync?schema=public
+      MONITOR_INTERVAL_MS: "30000"
+      LOG_LEVEL: "info"
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    volumes:
+      - .:/app
+      - chainsync-node-modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      install:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    command: ["sh", "-ec", "exec npm run worker"]
+    restart: on-failure
+    healthcheck:
+      # Probes the worker's own heartbeat row, which only advances when a full
+      # monitoring cycle completes.
+      test: ["CMD-SHELL", "node -e \"const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.systemState.findUnique({where:{key:'worker:heartbeat'}}).then(r=>{const fresh=r&&Date.now()-new Date(r.value).getTime()<600000;process.exit(fresh?0:1);}).catch(()=>process.exit(1));\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
       start_period: 60s
 
 volumes:
