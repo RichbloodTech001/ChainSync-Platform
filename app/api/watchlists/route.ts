@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { prisma } from "@/lib/prisma";
 import { currentUserId } from "@/lib/session";
+import { isSameOrigin } from "@/lib/origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,8 +19,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return NextResponse.json({ error: "Request origin rejected." }, { status: 403 });
+  if (!isSameOrigin(request)) return NextResponse.json({ error: "Request origin rejected." }, { status: 403 });
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "Sign in to save watched addresses." }, { status: 401, headers: { "Cache-Control": "no-store" } });
   let body: unknown;
