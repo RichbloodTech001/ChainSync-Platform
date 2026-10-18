@@ -12,7 +12,7 @@ Returns a liveness response and timestamp. It does not disclose secret configura
 
 `GET /api/networks`
 
-Returns Ethereum Mainnet (chain ID 1) and Sepolia (chain ID 11155111). The `configured` flag only reports whether an environment variable was supplied; it does not verify provider connectivity.
+Checks RPC connectivity for Ethereum Mainnet (chain ID 1) and Sepolia (chain ID 11155111), verifies the returned chain ID, and reports the latest block and response latency. `configured` indicates whether a custom RPC environment variable is present; the development fallback may still connect when it is false. Provider URLs and credentials are not returned.
 
 ## Native balance
 
