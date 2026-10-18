@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  passwordHash String
+  displayName String?
+  role UserRole @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  watchlists WatchAddress[]
+  alerts AlertPreference[]
+  auditEvents AuditEvent[] @relation("ActorEvents")
+}
+model WatchAddress {
+  id String @id @default(cuid())
+  userId String
+  label String
+  address String
+  chainId Int @default(1)
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, address, chainId])
+  @@index([userId, createdAt])
+}
+model AlertPreference {
+  id String @id @default(cuid())
+  userId String
+  enabled Boolean @default(true)
+  channel String @default("in_app")
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+model AuditEvent {
+  id String @id @default(cuid())
+  actorId String?
+  action String
+  targetType String?
+  targetId String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  actor User? @relation("ActorEvents", fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+}
+enum UserRole { USER ADMIN }
