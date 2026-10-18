@@ -15,6 +15,7 @@ import { PrismaClient } from "@prisma/client";
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 const prisma = new PrismaClient();
 
+const startedAt = new Date();
 const stamp = Date.now();
 const email = `chainsync-e2e-${stamp}@example.com`;
 const password = "chainsync-e2e-password-1";
@@ -81,9 +82,15 @@ async function waitFor<T>(check: () => Promise<T | null>, timeoutMs = 100_000, i
 
 afterAll(async () => {
   if (userId) await prisma.auditEvent.deleteMany({ where: { actorId: userId } });
+  // Failed sign-ins against an unknown account carry no actor id, so they are
+  // cleaned up by the window this run covered.
+  await prisma.auditEvent.deleteMany({ where: { action: "auth.login_failed", createdAt: { gte: startedAt } } });
   if (userId) await prisma.user.deleteMany({ where: { id: userId } });
   await prisma.emailMessage.deleteMany({ where: { to: email } });
   await prisma.rateLimitBucket.deleteMany({ where: { key: { contains: clientIp } } });
+  // Per-address counters (e.g. password-reset-address:<email>) are keyed by the
+  // run's own email rather than its IP.
+  await prisma.rateLimitBucket.deleteMany({ where: { key: { contains: email } } });
   await prisma.$disconnect();
 });
 
@@ -223,6 +230,14 @@ describe("ChainSync end-to-end", () => {
     const message = await latestEmail("watch_alert");
     expect(message).not.toBeNull();
     expect(message?.subject).toContain("[ChainSync]");
+
+    // Once the worker has indexed the address, the watchlist read must still
+    // serialize (the observed block is a BigInt in the database).
+    const watchlist = await api("/api/watchlists");
+    expect(watchlist.status).toBe(200);
+    const watched = (watchlist.body?.items as Array<{ id: string; lastObservedBlock?: string }>)[0];
+    expect(watched?.id).toBe(itemId);
+    expect(typeof watched?.lastObservedBlock).toBe("string");
 
     const alerts = await api("/api/alerts?limit=50");
     expect(alerts.status).toBe(200);

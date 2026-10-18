@@ -42,6 +42,18 @@ never need a rebuild — the repo is bind-mounted and `next dev` serves live sou
   endpoint for the sandbox; a real provider URL supplied as a Base44 secret
   overrides it. The app's Sepolia fallback still works.
 - **Prisma engine warnings about OpenSSL 1.1.x are noise** once `openssl` is installed.
+- **`WatchAddress.lastObservedBlock`, `MonitorEvent.blockNumber` and
+  `NetworkSample.latestBlock` are `BigInt` columns.** `NextResponse.json()` cannot
+  encode a BigInt, and every route wraps its work in a `try/catch` that answers
+  503, so an unconverted BigInt looks like "service temporarily unavailable"
+  rather than a crash. `/api/watchlists` GET used to return raw rows and answered
+  503 for every saved address the worker had already indexed; it now maps
+  `lastObservedBlock` to a decimal string (as `/api/monitoring` already did for
+  `blockNumber`/`latestBlock`). Convert any new BigInt field before responding.
+- **A duplicate watchlist entry is refused before the insert** (409 "already saved
+  for that network"). Letting Postgres reject it via the unique constraint worked,
+  but the database logs every violation at ERROR level, which reads as a fault in
+  container logs. The `P2002` catch stays for concurrent inserts.
 
 ## Environment and secrets
 
@@ -108,4 +120,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE \
 ```bash
 docker compose -f docker-compose.base44.yml exec -T web sh -ec 'npm run typecheck'
 docker compose -f docker-compose.base44.yml exec -T web sh -ec 'npm test'
+docker compose -f docker-compose.base44.yml exec -T web sh -ec 'npm run test:e2e'
 ```
+
+`npm run test:e2e` drives the running app on `localhost:3000` and needs the
+`web` *and* `worker` services up (it waits for the worker to index a watched
+address and deliver an alert). It creates its own account and removes every row
+it created afterwards, including the audit rows and rate-limit counters that are
+not linked to that account — confirm with a count of `User`, `AuditEvent`,
+`EmailMessage`, `Alert`, `MonitorEvent` and `RateLimitBucket` if you change it.
