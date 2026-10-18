@@ -6,6 +6,7 @@ ChainSync is a responsive, read-only blockchain monitoring foundation for Ethere
 
 - Responsive monitoring dashboard and local interface preview.
 - Public native ETH balance lookup at `/wallet-check`.
+- Live RPC connectivity checks, chain-ID verification, response latency, and latest-block status at `/network-status`.
 - Transaction hash lookup at `/transaction-check`, including sender, recipient, native value, block, confirmations and available receipt status.
 - Read-only API endpoints for health, supported networks, balances and transaction details.
 - Account registration, sign-in, sign-out and current-session endpoints.
