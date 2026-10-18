@@ -12,6 +12,7 @@ ChainSync is a responsive, read-only blockchain monitoring foundation for Ethere
 - Account registration, sign-in, sign-out and current-session endpoints.
 - Bcrypt password hashing and signed, expiring HttpOnly session cookies.
 - Authenticated, owner-scoped persistent watchlists for public EVM addresses on Ethereum Mainnet and Sepolia.
+- Sync project tracking: a `Project` model with a `ProjectStatus` enum (`ACTIVE`, `PENDING`, `COMPLETE`), a live sync-progress dashboard at `/dashboard`, and an administrator panel at `/admin`.
 - PostgreSQL Prisma schema and initial migration.
 - Vitest input-validation tests and GitHub Actions verification workflow.
 
@@ -39,6 +40,8 @@ ChainSync is a responsive, read-only blockchain monitoring foundation for Ethere
 - `GET /api/watchlists`
 - `POST /api/watchlists`
 - `DELETE /api/watchlists/:id`
+- `GET /api/projects`, `POST /api/projects`, `PATCH /api/projects/:id`, `DELETE /api/projects/:id`
+- `GET /api/admin/overview` (administrator accounts only)
 
 Full request details and readiness limitations are in [docs/API.md](docs/API.md).
 

@@ -55,6 +55,12 @@ never need a rebuild — the repo is bind-mounted and `next dev` serves live sou
   not in an env file, and it is never a Base44 secret.
 - `SESSION_SECRET` must be ≥32 bytes; `lib/session.ts` throws otherwise. Auth
   endpoints fail with a 500 if it is missing or too short.
+- `ADMIN_EMAILS` is the comma-separated administrator allowlist read by
+  `lib/admin.ts` (`ADMIN_EMAILS=richbloodtech247@gmail.com` in
+  `.env.base44-defaults`). An allowlisted account is served — and promoted once,
+  on its next authenticated request — as `ADMIN`; every other account keeps its
+  stored role. It is configuration, not a credential, but a value in
+  `/run/base44/app.env` still wins because it is loaded after the defaults file.
 - `BASE44_PREVIEW_MODE` and `BASE44_PUBLIC_HOST_SUFFIX` are passed through to
   `web` and read by `lib/origin.ts` (preview-only same-origin allowance, see
   above). `BASE44_SANDBOX_HOST_DOMAIN` is passed through but unused. Next 14
@@ -112,6 +118,34 @@ docker compose -f docker-compose.base44.yml exec -T web sh -ec 'npm run typechec
 docker compose -f docker-compose.base44.yml exec -T web sh -ec 'npm test'
 ```
 
+## Sync projects and admin panel
+
+- `Project` carries `ProjectStatus` (`ACTIVE` / `PENDING` / `COMPLETE`) plus
+  `progress`, `network` and `lastSyncedAt`. Migration
+  `20261018041500_project_sync_status` creates the enum and the table; `up -d`
+  applies it through the `migrate` service.
+- Routes: `/api/projects` (GET, POST), `/api/projects/:id` (PATCH, DELETE — owner
+  scoped), `/api/admin/overview` (GET — administrator only, 403 otherwise).
+- Pages: `/dashboard` (projects for the signed-in account) and `/admin`
+  (every account and project). Both poll every 5 seconds, so state written by the
+  API appears without a reload.
+- "Needs attention" means pending, or active with no recorded sync in the last 15
+  minutes. A status or progress change stamps `lastSyncedAt`. There is no
+  background indexer in this repo, so nothing advances progress on its own — the
+  dashboard shows recorded state plus live RPC chain tips.
+- Administrator access is granted by `ADMIN_EMAILS`. To verify it without
+  touching a real inbox: add a throwaway address to `ADMIN_EMAILS`, recreate
+  `web`, register that address, confirm `/api/admin/overview` answers 200, then
+  remove the address and recreate `web` again. A non-allowlisted account must
+  receive 403.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/api/admin/overview   # 403 signed out
+docker compose -f docker-compose.base44.yml exec -T web sh -ec 'npx prisma migrate status'
+docker compose -f docker-compose.base44.yml exec -T web sh -ec \
+  'npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script'  # expect "empty"
+```
+
 ## Full-page loads (verification quirk)
 
 The pages link with plain `<a href>` (no `next/link`), so moving between routes is
@@ -125,3 +159,11 @@ the app's own page (the browser still sends a real `Origin` header, so
 `next build` must not be run inside the running `web` container: it overwrites the
 `.next` directory the dev server is using. Build an isolated copy instead (copy the
 source to `/tmp`, symlink `/app/node_modules`, then `npx next build`).
+
+Routes added after the browser has loaded the app are also not reachable by the
+platform's automated route change: it rewrites the URL but the new route does not
+render, and a forced document load ends the carried-over state — the next call
+starts at `/` with the browser session cleared. A signed-in page therefore cannot
+be driven across calls. Load the route and drive it inside the same call, or
+exercise the same endpoints with a same-origin `fetch` and assert on what
+persisted (the server-side role check is the real gate).

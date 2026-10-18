@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { rateLimit, requestKey } from "@/lib/rate-limit";
 import { createSession, SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
 import { isSameOrigin } from "@/lib/origin";
+import { effectiveRole } from "@/lib/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
   if (password.length < 12 || password.length > 128) return NextResponse.json({ error: "Password must be between 12 and 128 characters." }, { status: 400 });
   try {
     const passwordHash = await hash(password, 12);
-    const user = await prisma.user.create({ data: { email, passwordHash, displayName: displayName || null }, select: { id: true, email: true, displayName: true, createdAt: true } });
+    const user = await prisma.user.create({ data: { email, passwordHash, displayName: displayName || null, role: effectiveRole(email, "USER") }, select: { id: true, email: true, displayName: true, createdAt: true } });
     const token = await createSession(user.id);
     const response = NextResponse.json({ user }, { status: 201, headers: { "Cache-Control": "no-store" } });
     response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
