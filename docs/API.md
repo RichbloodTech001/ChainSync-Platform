@@ -30,6 +30,25 @@ Example:
 curl 'http://localhost:3000/api/balance?address=0x0000000000000000000000000000000000000000&network=ethereum'
 ```
 
+
+## Transaction lookup
+
+`GET /api/transaction?hash=0x...&network=ethereum`
+
+- `hash`: required 32-byte transaction hash (64 hexadecimal characters after `0x`).
+- `network`: `ethereum` (default) or `sepolia`.
+- Successful responses include sender, recipient, native value, block, confirmation count, transaction status, and retrieval time.
+- Invalid hashes or networks return HTTP 400. A missing transaction or provider failure returns a sanitized HTTP 404 response.
+- A receipt that is not available is not treated as a successful transaction.
+
+Example:
+
+```sh
+curl 'http://localhost:3000/api/transaction?hash=0x<64-hex-transaction-hash>&network=ethereum'
+```
+
+The interactive explorer is available at `/transaction-check`; the public balance tool is at `/wallet-check`.
+
 ## Security and readiness notes
 
 These endpoints are read-only and never request keys or sign transactions. Public RPC fallbacks are included for development convenience; for production, configure a reputable RPC provider with documented quotas and monitoring.
