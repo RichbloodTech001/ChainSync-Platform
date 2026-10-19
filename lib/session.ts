@@ -1,8 +1,18 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { prisma } from "./prisma";
 
 export const SESSION_COOKIE = "chainsync_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 7;
+
+export type SessionUser = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  role: "USER" | "ADMIN";
+  emailVerifiedAt: Date | null;
+  sessionEpoch: number;
+};
 
 function secretKey() {
   const secret = process.env.SESSION_SECRET;
@@ -12,8 +22,8 @@ function secretKey() {
   return new TextEncoder().encode(secret);
 }
 
-export async function createSession(userId: string) {
-  return new SignJWT({ purpose: "chainsync-session" })
+export async function createSession(userId: string, sessionEpoch = 0) {
+  return new SignJWT({ purpose: "chainsync-session", epoch: sessionEpoch })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setIssuer("chainsync")
@@ -23,7 +33,7 @@ export async function createSession(userId: string) {
     .sign(secretKey());
 }
 
-export async function readSession(token?: string | null): Promise<string | null> {
+export async function readSession(token?: string | null): Promise<{ userId: string; epoch: number } | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey(), {
@@ -31,15 +41,46 @@ export async function readSession(token?: string | null): Promise<string | null>
       audience: "chainsync-web",
       algorithms: ["HS256"],
     });
-    return payload.purpose === "chainsync-session" && typeof payload.sub === "string" ? payload.sub : null;
+    if (payload.purpose !== "chainsync-session" || typeof payload.sub !== "string") return null;
+    return { userId: payload.sub, epoch: typeof payload.epoch === "number" ? payload.epoch : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The signed-in account, or null. A token is only accepted while its session
+ * epoch matches the account's current epoch, so changing or resetting a password
+ * invalidates every session that was issued earlier.
+ */
+export async function currentUser(): Promise<SessionUser | null> {
+  const session = await readSession(cookies().get(SESSION_COOKIE)?.value);
+  if (!session) return null;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { id: true, email: true, displayName: true, role: true, emailVerifiedAt: true, sessionEpoch: true },
+    });
+    if (!user || user.sessionEpoch !== session.epoch) return null;
+    return user;
   } catch {
     return null;
   }
 }
 
 export async function currentUserId() {
-  const token = cookies().get(SESSION_COOKIE)?.value;
-  return readSession(token);
+  return (await currentUser())?.id ?? null;
+}
+
+/** Shape returned to clients: never includes the password hash or session epoch. */
+export function publicUser(user: SessionUser) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+    emailVerified: Boolean(user.emailVerifiedAt),
+  };
 }
 
 export const sessionCookieOptions = {

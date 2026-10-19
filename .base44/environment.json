@@ -1,0 +1,23 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "SESSION_SECRET",
+      "description": "Signs the HttpOnly session cookie (lib/session.ts). Must be at least 32 bytes. A Base44-generated development value is used until you supply your own.",
+      "requiredAtBoot": true,
+      "generatedForDevelopment": true
+    },
+    {
+      "name": "ETHEREUM_RPC_URL",
+      "description": "Optional. Ethereum Mainnet JSON-RPC endpoint from a reputable provider (e.g. Alchemy, Infura). A public development endpoint is used when unset.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SEPOLIA_RPC_URL",
+      "description": "Optional. Sepolia JSON-RPC endpoint from a reputable provider (e.g. Alchemy, Infura). The app's public Sepolia fallback is used when unset.",
+      "requiredAtBoot": false
+    }
+  ]
+}

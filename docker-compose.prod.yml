@@ -1,0 +1,95 @@
+# Production deployment for ChainSync: PostgreSQL + web + monitoring worker.
+#
+#   cp .env.production.example .env.production   # then fill in real values
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Migrations run as a one-shot service before web/worker start. Values in
+# .env.production are deployment secrets: keep the file out of version control
+# (it is gitignored) and never commit a real value.
+name: chainsync-prod
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  NEXT_TELEMETRY_DISABLED: "1"
+  DATABASE_URL: postgresql://${POSTGRES_USER:-chainsync}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db:5432/${POSTGRES_DB:-chainsync}?schema=public
+  # Public URL used in verification/reset/alert emails.
+  APP_URL: ${APP_URL:-http://localhost:3000}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chainsync}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-chainsync}
+    volumes:
+      - chainsync-prod-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chainsync} -d ${POSTGRES_DB:-chainsync}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # One-shot: applies reviewed migrations, then exits. Never part of a rollout
+  # health check.
+  migrate:
+    image: chainsync-prod:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment: *app-environment
+    env_file:
+      - ./.env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+
+  web:
+    image: chainsync-prod:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "3000:3000"
+    environment: *app-environment
+    env_file:
+      - ./.env.production
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Monitoring: scheduled network checks, watched-address indexing, alert delivery.
+  worker:
+    image: chainsync-prod:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      <<: *app-environment
+      MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-60000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    env_file:
+      - ./.env.production
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["npx", "tsx", "worker/index.ts"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.systemState.findUnique({where:{key:'worker:heartbeat'}}).then(r=>{const fresh=r&&Date.now()-new Date(r.value).getTime()<600000;process.exit(fresh?0:1);}).catch(()=>process.exit(1));\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  chainsync-prod-db:

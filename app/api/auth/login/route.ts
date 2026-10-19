@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { rateLimit, requestKey } from "@/lib/rate-limit";
-import { createSession, SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
+import { rateLimit, rateLimitResponse, requestKey } from "@/lib/rate-limit";
+import { createSession, SESSION_COOKIE, sessionCookieOptions, publicUser } from "@/lib/session";
+import { isSameOrigin } from "@/lib/origin";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const rate = rateLimit(requestKey(request, "login"), 10, 15 * 60 * 1000);
-  if (!rate.allowed) return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429, headers: { "Retry-After": String(rate.retryAfter) } });
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return NextResponse.json({ error: "Request origin rejected." }, { status: 403 });
+  const rate = await rateLimit(requestKey(request, "login"), 10, 15 * 60 * 1000);
+  if (!rate.allowed) return rateLimitResponse(rate);
+  if (!isSameOrigin(request)) return NextResponse.json({ error: "Request origin rejected." }, { status: 403 });
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: "A valid JSON body is required." }, { status: 400 }); }
   if (!body || typeof body !== "object") return NextResponse.json({ error: "A valid JSON body is required." }, { status: 400 });
@@ -22,9 +23,13 @@ export async function POST(request: NextRequest) {
   try {
     const user = await prisma.user.findUnique({ where: { email } });
     const valid = user ? await compare(password, user.passwordHash) : false;
-    if (!user || !valid) return NextResponse.json({ error: "Invalid email or password." }, { status: 401, headers: { "Cache-Control": "no-store" } });
-    const token = await createSession(user.id);
-    const response = NextResponse.json({ user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role } }, { headers: { "Cache-Control": "no-store" } });
+    if (!user || !valid) {
+      await audit({ action: "auth.login_failed", targetType: "user", metadata: { emailDomain: email.split("@")[1] ?? null } });
+      return NextResponse.json({ error: "Invalid email or password." }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    }
+    const token = await createSession(user.id, user.sessionEpoch);
+    await audit({ actorId: user.id, action: "auth.login", targetType: "user", targetId: user.id });
+    const response = NextResponse.json({ user: publicUser(user) }, { headers: { "Cache-Control": "no-store" } });
     response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
     return response;
   } catch {

@@ -1,0 +1,13 @@
+# Base44 sandbox development image.
+#
+# Deliberately does NOT copy the application source: the repo is bind-mounted at
+# runtime and runs `next dev`, so every edit is picked up without a rebuild.
+# openssl is required for Prisma's engine/platform detection.
+FROM node:20-bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
